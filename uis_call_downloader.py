@@ -1,102 +1,96 @@
 import requests
-import datetime
 import os
-import socket
+import json
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-
-# ==== Конфигурация ====
+# Загрузка токена из .env
 load_dotenv()
-token_raw = os.getenv("UIS_API_TOKEN")
-UIS_API_TOKEN = f"Bearer {token_raw}"
-DOWNLOAD_DIR = 'downloads'
-
-# Даты: вчера → сегодня
-START_DATE = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-END_DATE = datetime.date.today().isoformat()
-
-HEADERS = {
-    'Authorization': UIS_API_TOKEN,
-    'Content-Type': 'application/json'
-}
+ACCESS_TOKEN = os.getenv("UIS_API_TOKEN")
 
 
-def is_connected():
-    try:
-        socket.create_connection(("8.8.8.8", 53), timeout=3)
-        return True
-    except OSError:
-        return False
-
-
-def get_call_sessions(start_date, end_date):
-    url = 'https://dataapi.uiscom.ru/v2/reports/calls'
+def get_calls_report(date_from, date_to):
+    url = 'https://dataapi.uiscom.ru/v2.0'
     payload = {
-        "date_from": start_date,
-        "date_to": end_date,
-        "limit": 100,
-        "offset": 0
+        "id": "id777",
+        "jsonrpc": "2.0",
+        "method": "get.calls_report",
+        "params": {
+            "access_token": ACCESS_TOKEN,
+            "date_from": date_from,
+            "date_till": date_to
+        }
     }
 
-    print(f"🔍 Получаем список звонков с {start_date} по {end_date}...")
-    response = requests.post(url, json=payload, headers=HEADERS)
+    print(f"🔍 Получаем звонки с {date_from} по {date_to}...")
+    response = requests.post(url, json=payload)
     response.raise_for_status()
-    data = response.json()
-    sessions = [call['call_session_id'] for call in data.get('data', [])]
-    print(f"✅ Найдено звонков: {len(sessions)}")
-    return sessions
+    result = response.json()
+
+    calls = result.get("result", {}).get("data", [])
+    if not isinstance(calls, list):
+        raise ValueError("Неверный формат данных: 'result.data' должен быть списком вызовов")
+
+    print(f"✅ Получено звонков: {len(calls)}")
+    return calls
 
 
-def get_media_links(session_ids):
-    url = 'https://dataapi.uiscom.ru/media_files'
-    payload = {"call_session_ids": session_ids}
+def download_record(call, index, target_dir):
+    talk_id = call.get("communication_id")
+    records = call.get("call_records", [])
+    if not talk_id or not records:
+        return
 
-    print("🔗 Получаем ссылки на записи...")
-    response = requests.post(url, json=payload, headers=HEADERS, verify=True)
-    response.raise_for_status()
-    data = response.json()
-    media_dict = {
-        entry['call_session_id']: entry['media_url']
-        for entry in data.get('data', [])
-        if entry.get('media_url')
-    }
-    print(f"🎧 Ссылок на записи: {len(media_dict)}")
-    return media_dict
+    record_hash = records[0]  # берём первый элемент
+    url = f"https://app.uiscom.ru/system/media/talk/{talk_id}/{record_hash}/"
+    filename = os.path.join(target_dir, f"call{index}.mp3")
 
+    if os.path.exists(filename):
+        print(f"⏭ Запись {filename} уже существует, пропускаем.")
+        return
 
-def download_files(media_dict):
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    for session_id, url in media_dict.items():
-        try:
-            print(f"⬇ Скачиваем звонок {session_id}...")
-            response = requests.get(url)
-            if response.status_code == 200:
-                filename = os.path.join(DOWNLOAD_DIR, f'{session_id}.mp3')
-                with open(filename, 'wb') as f:
-                    f.write(response.content)
-                print(f"✅ Сохранено: {filename}")
-            else:
-                print(f"⚠ Ошибка скачивания {session_id}: HTTP {response.status_code}")
-        except Exception as e:
-            print(f"❌ Ошибка при скачивании {session_id}: {e}")
+    print(f"⬇ Скачиваем {filename}...")
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            with open(filename, 'wb') as f:
+                f.write(response.content)
+            print(f"✅ Сохранено: {filename}")
+        else:
+            print(f"⚠ Ошибка скачивания: HTTP {response.status_code}")
+    except Exception as e:
+        print(f"❌ Ошибка при скачивании {talk_id}: {e}")
 
 
-# ==== Главный запуск ====
-if __name__ == '__main__':
+def download_calls():
     print("🚀 Старт скрипта")
-    if not is_connected():
-        print("❌ Нет подключения к интернету. Завершение.")
-        exit()
+
+    if not ACCESS_TOKEN:
+        print("❗ ACCESS_TOKEN не найден в .env")
+        return
+
+    # Динамически рассчитываем дату "вчера"
+    date_to = datetime.now().replace(hour=23, minute=59, second=59)
+    date_from = (date_to - timedelta(days=1)).replace(hour=0, minute=0, second=0)
+
+    date_from_str = date_from.strftime("%Y-%m-%d %H:%M:%S")
+    date_to_str = date_to.strftime("%Y-%m-%d %H:%M:%S")
+    folder_date = date_from.strftime("%d.%m.%Y")
+    target_dir = os.path.join("audio", f"звонки_{folder_date}")
+    os.makedirs(target_dir, exist_ok=True)
 
     try:
-        sessions = get_call_sessions(START_DATE, END_DATE)
-        if sessions:
-            media_links = get_media_links(sessions)
-            if media_links:
-                download_files(media_links)
-            else:
-                print("ℹ Нет доступных ссылок на звонки.")
+        calls = get_calls_report(date_from_str, date_to_str)
+        if calls:
+            print("📦 Пример содержимого вызова:", json.dumps(calls[0], indent=2, ensure_ascii=False))
         else:
-            print("ℹ Нет звонков за указанный период.")
+            print("ℹ️ Нет звонков за указанный период.")
+
+        for idx, call in enumerate(calls, start=1):
+            download_record(call, idx, target_dir)
     except Exception as e:
         print(f"❗ Ошибка выполнения скрипта: {e}")
+
+
+if __name__ == "__main__":
+    download_calls()

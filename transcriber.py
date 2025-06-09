@@ -1,7 +1,7 @@
 import os
 import openai
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -51,19 +51,19 @@ def transcribe_file(mp3_path: Path, transcript_path: Path, assign_roles=False) -
 
 
 def transcribe_all(assign_roles=False):
-    today = datetime.now().astimezone().strftime("%d.%m.%Y")
-    today_folder_name = f"звонки_{today}"
-    today_dir = AUDIO_DIR / today_folder_name
-    transcript_dir = TRANSCRIPTS_DIR / f"транскрибация_{today}"
+    yesterday = (datetime.now().astimezone() - timedelta(days=1)).strftime("%d.%m.%Y")
+    yesterday_folder_name = f"звонки_{yesterday}"
+    audio_dir = AUDIO_DIR / yesterday_folder_name
+    transcript_dir = TRANSCRIPTS_DIR / f"транскрибация_{yesterday}"
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
     call_counter = {}
 
-    if not today_dir.exists():
-        print(f"Папка с аудиофайлами на сегодня не найдена: {today_dir}")
+    if not audio_dir.exists():
+        print(f"Папка с аудиофайлами за вчера не найдена: {audio_dir}")
         return
 
-    for mp3_file in sorted(today_dir.glob("*.mp3")):
+    for mp3_file in sorted(audio_dir.glob("*.mp3")):
         base_name = mp3_file.stem
         n = call_counter.get(base_name, 1)
 
