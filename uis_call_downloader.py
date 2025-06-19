@@ -10,6 +10,9 @@ ACCESS_TOKEN = os.getenv("UIS_API_TOKEN")
 
 
 def get_calls_report(date_from, date_to):
+    """
+    Получает отчет о звонках с сервера UIS за указанный период.
+    """
     url = 'https://dataapi.uiscom.ru/v2.0'
     payload = {
         "id": "id777",
@@ -24,7 +27,7 @@ def get_calls_report(date_from, date_to):
 
     print(f"🔍 Получаем звонки с {date_from} по {date_to}...")
     response = requests.post(url, json=payload)
-    response.raise_for_status()
+    response.raise_for_status()  # Вызывает исключение для HTTP ошибок (4xx или 5xx)
     result = response.json()
 
     calls = result.get("result", {}).get("data", [])
@@ -35,59 +38,116 @@ def get_calls_report(date_from, date_to):
     return calls
 
 
+def get_next_call_index(directory):
+    """
+    Определяет следующий доступный индекс для нового файла callN.mp3,
+    чтобы избежать перезаписи и продолжить нумерацию.
+    """
+    existing = [f for f in os.listdir(directory) if f.startswith("call") and f.endswith(".mp3")]
+    used_indexes = set()
+    for f in existing:
+        try:
+            # Извлекаем число из имени файла (например, "call123.mp3" -> 123)
+            number = int(f.replace("call", "").replace(".mp3", ""))
+            used_indexes.add(number)
+        except ValueError:
+            # Игнорируем файлы, имена которых не соответствуют шаблону
+            continue
+    # Возвращаем максимальный использованный индекс + 1, или 1, если файлов нет
+    return max(used_indexes, default=0) + 1
+
+
 def download_record(call, index, target_dir):
+    """
+    Скачивает запись конкретного звонка и сохраняет связанную с ним информацию.
+    """
     talk_id = call.get("communication_id")
     records = call.get("call_records", [])
+
+    # Пропускаем, если нет ID разговора или записей
     if not talk_id or not records:
+        print(f"Предупреждение: Пропуск звонка без communication_id или записей: {call}")
         return
 
-    record_hash = records[0]  # берём первый элемент
+    record_hash = records[0]  # Берём хеш первой записи звонка
     url = f"https://app.uiscom.ru/system/media/talk/{talk_id}/{record_hash}/"
+
     filename = os.path.join(target_dir, f"call{index}.mp3")
+    info_filename = os.path.join(target_dir, f"call{index}_call_info.json")
 
     if os.path.exists(filename):
         print(f"⏭ Запись {filename} уже существует, пропускаем.")
-        return
+    else:
+        print(f"⬇ Скачиваем {filename}...")
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                with open(filename, 'wb') as f:
+                    f.write(response.content)
+                print(f"✅ Сохранено: {filename}")
+            else:
+                print(f"⚠ Ошибка скачивания {url}: HTTP {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Ошибка сетевого запроса при скачивании {talk_id}: {e}")
+        except Exception as e:
+            print(f"❌ Неизвестная ошибка при скачивании {talk_id}: {e}")
 
-    print(f"⬇ Скачиваем {filename}...")
+    # Сохраняем информацию о звонке
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            with open(filename, 'wb') as f:
-                f.write(response.content)
-            print(f"✅ Сохранено: {filename}")
-        else:
-            print(f"⚠ Ошибка скачивания: HTTP {response.status_code}")
+        call_info = {
+            "start_time": call.get("start_time", ""),
+            "raw": call  # Сохраняем все сырые данные звонка для полноты
+        }
+        with open(info_filename, 'w', encoding='utf-8') as f:
+            json.dump(call_info, f, indent=2, ensure_ascii=False)
+        print(f"📝 Сохранена информация: {info_filename}")
     except Exception as e:
-        print(f"❌ Ошибка при скачивании {talk_id}: {e}")
+        print(f"❌ Ошибка при сохранении call_info для {talk_id}: {e}")
 
 
 def download_calls():
+    """
+    Основная функция для скачивания всех звонков за вчерашний день.
+    """
     print("🚀 Старт скрипта")
 
     if not ACCESS_TOKEN:
-        print("❗ ACCESS_TOKEN не найден в .env")
+        print("❗ ACCESS_TOKEN не найден в .env. Убедитесь, что файл .env существует и содержит ACCESS_TOKEN.")
         return
 
-    # Динамически рассчитываем дату "вчера"
-    date_to = datetime.now().replace(hour=23, minute=59, second=59)
-    date_from = (date_to - timedelta(days=1)).replace(hour=0, minute=0, second=0)
+    # --- Коррекция временного промежутка для получения ЗВОНКОВ ЗА ВЧЕРАШНИЙ ДЕНЬ ---
+    yesterday = datetime.now().astimezone() - timedelta(days=1)
+
+    # Дата начала вчерашнего дня (00:00:00)
+    date_from = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Дата окончания вчерашнего дня (23:59:59)
+    date_to = yesterday.replace(hour=23, minute=59, second=59, microsecond=0)
+    # -------------------------------------------------------------------------
 
     date_from_str = date_from.strftime("%Y-%m-%d %H:%M:%S")
     date_to_str = date_to.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Формируем имя папки на основе даты "from"
     folder_date = date_from.strftime("%d.%m.%Y")
     target_dir = os.path.join("audio", f"звонки_{folder_date}")
-    os.makedirs(target_dir, exist_ok=True)
+    os.makedirs(target_dir, exist_ok=True)  # Создаем папку, если ее нет
 
     try:
         calls = get_calls_report(date_from_str, date_to_str)
-        if calls:
-            print("📦 Пример содержимого вызова:", json.dumps(calls[0], indent=2, ensure_ascii=False))
-        else:
+        if not calls:
             print("ℹ️ Нет звонков за указанный период.")
+            return  # Выходим, если звонков нет
 
-        for idx, call in enumerate(calls, start=1):
-            download_record(call, idx, target_dir)
+        # Если есть звонки, выводим пример первого для отладки
+        print("📦 Пример содержимого первого вызова:", json.dumps(calls[0], indent=2, ensure_ascii=False))
+
+        current_idx = get_next_call_index(target_dir)  # Получаем стартовый индекс
+        for call in calls:
+            print(f"\n🔹 Звонок #{current_idx}:")
+            # print(json.dumps(call, indent=2, ensure_ascii=False)) # Можно раскомментировать для детальной отладки
+            download_record(call, current_idx, target_dir)
+            current_idx += 1  # Увеличиваем индекс для следующего звонка
+
     except Exception as e:
         print(f"❗ Ошибка выполнения скрипта: {e}")
 
