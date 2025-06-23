@@ -3,6 +3,8 @@ import json
 import requests
 from datetime import datetime, timedelta
 from pathlib import Path
+import re
+from telegram_bot_integration import send_telegram_message
 
 # URL вашей Google Forms
 FORM_URL = "https://docs.google.com/forms/u/0/d/e/1FAIpQLSeI-BvmkSZgzGXeQB83KQLR0O-5_ALgdhWg9LoMV7DskLqBLQ/formResponse"
@@ -14,7 +16,7 @@ ENTRY_MAP = {
     "phone": "entry.1794131010",
     "дата_звонка": "entry.887244152",
     "тип_звонка": "entry.1308973478",
-    "ссылка_заказ": "entry.1438937468",
+    "ссылка_клиента": "entry.1438937468",  # Изменено: теперь это ссылка на карточку клиента
     "улыбка_в_голосе": "entry.762756437",
     "установление_контакта": "entry.2128803646",
     "квалификация": "entry.1587001077",
@@ -30,7 +32,7 @@ ENTRY_MAP = {
     "предоплата": "entry.257021647"
 }
 
-# Расширения для менеджеров
+# Расширения для менеджеров (больше не используются для поля 'phone', но оставлены, если нужны в другом месте)
 EXTENSIONS = {
     "Анастасия": "35",
     "Вера": "45",
@@ -44,54 +46,86 @@ EXTENSIONS = {
 }
 
 
+def get_call_number_from_filename(filename: str) -> int:
+    """
+    Извлекает числовой идентификатор звонка из имени файла.
+    Например, для 'call12_analysis.json' вернет 12.
+    """
+    match = re.match(r'call(\d+)_analysis\.json', filename)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
 def send_analyses_to_google_form(folder_path):
     """
-    Отправляет данные анализа звонков в Google Forms.
+    Отправляет данные анализа звонков в Google Forms и краткое резюме в Telegram,
+    учитывая категорию звонка.
     """
-    counter = 1  # Счетчик для номера звонка
+    counter = 1
 
-    # Получаем вчерашнюю дату, чтобы сформировать путь к папке audio
     yesterday_date_str = (datetime.now().astimezone() - timedelta(days=1)).strftime("%d.%m.%Y")
-    # Базовая папка для аудиофайлов (там, где находятся _call_info.json)
     audio_calls_folder = Path("audio") / f"звонки_{yesterday_date_str}"
 
-    # Итерируем по всем JSON-файлам анализа в указанной папке
-    for filename in sorted(os.listdir(folder_path)):
-        if not filename.endswith("_analysis.json"):
-            continue
+    analysis_files = []
+    for filename in os.listdir(folder_path):
+        if filename.endswith("_analysis.json"):
+            analysis_files.append(filename)
 
-        # Извлекаем базовое имя файла (например, "call1", "call2")
+    analysis_files.sort(key=get_call_number_from_filename)
+
+    for filename in analysis_files:
         base_name = filename.replace("_analysis.json", "")
         analysis_path = os.path.join(folder_path, filename)
-
-        # Формируем правильный путь к соответствующему файлу информации о звонке
-        # Теперь ищем его в папке audio/звонки_дд.мм.гггг/
         info_path = audio_calls_folder / f"{base_name}_call_info.json"
 
-        # Загружаем данные анализа
-        with open(analysis_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        call_summary = ""
+        analysis_data = {}
+        call_category = "Неизвестно"  # Инициализация категории
 
-        # Инициализируем start_time и call_type значениями по умолчанию
+        try:
+            with open(analysis_path, "r", encoding="utf-8") as f:
+                analysis_data = json.load(f)
+                call_summary = analysis_data.get("summary", "")
+                call_category = analysis_data.get("call_category", "Неизвестно")  # Извлекаем категорию
+        except FileNotFoundError:
+            print(f"Предупреждение: Файл анализа не найден для {base_name}: {analysis_path}. Пропуск.")
+            counter += 1
+            continue
+        except json.JSONDecodeError as e:
+            print(f"Ошибка декодирования JSON для {analysis_path}: {e}. Пропуск.")
+            counter += 1
+            continue
+        except Exception as e:
+            print(f"Ошибка при чтении или обработке {analysis_path}: {e}. Пропуск.")
+            counter += 1
+            continue
+
         start_time = ""
-        call_type = ""  # Инициализация для типа звонка
+        call_type = ""
+        customer_card_link = ""  # Изменено с order_link на customer_card_link
+        contact_phone_number = ""
 
-        # Загружаем информацию о звонке, если файл найден
         if info_path.exists():
             try:
                 with open(info_path, "r", encoding="utf-8") as f:
                     call_info = json.load(f)
 
-                # Извлекаем 'start_time'
                 start_time = call_info.get("start_time", "")
 
-                # Извлекаем 'direction' из 'raw' и преобразуем в "Входящий" или "Исходящий"
                 direction = call_info.get("raw", {}).get("direction", "")
                 if direction == "in":
                     call_type = "Входящий"
                 elif direction == "out":
                     call_type = "Исходящий"
-                # Если direction не "in" и не "out", call_type останется пустым
+
+                # Изменено: Извлекаем ссылку на карточку клиента
+                customer_card_link = call_info.get("customer_card_link", "")
+
+                contact_phone_number = call_info.get("contact_phone_number", "")
+                if not contact_phone_number:
+                    contact_phone_number = call_info.get("raw", {}).get("contact_phone_number", "")
+
             except json.JSONDecodeError as e:
                 print(f"Ошибка декодирования JSON для {info_path}: {e}")
             except Exception as e:
@@ -99,34 +133,58 @@ def send_analyses_to_google_form(folder_path):
         else:
             print(f"Предупреждение: Файл информации о звонке не найден для {base_name}: {info_path}")
 
-        # Определяем имя менеджера
-        manager = data.get("manager_name", "Имя")
+        manager = analysis_data.get("manager_name", "Имя")
+        phone_to_send = contact_phone_number
 
-        # Формируем номер телефона с добавочным, если менеджер известен
-        phone_base = "74950855397"
-        extension = EXTENSIONS.get(manager)
-        phone = f"{phone_base} доб. {extension}" if extension else phone_base
+        # --- Логика отправки в Google Forms ---
+        if call_category == "Заказ":
+            payload = {
+                ENTRY_MAP["number"]: counter,
+                ENTRY_MAP["name"]: manager,
+                ENTRY_MAP["phone"]: phone_to_send,
+                ENTRY_MAP["дата_звонка"]: start_time,
+                ENTRY_MAP["тип_звонка"]: call_type,
+                ENTRY_MAP["ссылка_клиента"]: customer_card_link
+                # Изменено: теперь отправляем ссылку на карточку клиента
+            }
 
-        # Формируем payload (набор данных) для отправки в Google Forms
-        payload = {
-            ENTRY_MAP["number"]: counter,
-            ENTRY_MAP["name"]: manager,
-            ENTRY_MAP["phone"]: phone,
-            ENTRY_MAP["дата_звонка"]: start_time,
-            ENTRY_MAP["тип_звонка"]: call_type  # Добавляем тип звонка
-        }
+            for key in analysis_data:
+                if key in ENTRY_MAP and key not in ["name", "тип_звонка", "ссылка_клиента", "call_category",
+                                                    "summary"]:  # Обновлен список исключений
+                    payload[ENTRY_MAP[key]] = analysis_data[key]
 
-        # Добавляем остальные критерии анализа в payload
-        for key in data:
-            # Имя и тип звонка уже обработаны отдельно
-            if key in ENTRY_MAP and key not in ["name", "тип_звонка"]:
-                payload[ENTRY_MAP[key]] = data[key]
-
-        # Отправляем данные в Google Forms
-        response = requests.post(FORM_URL, data=payload)
-        if response.status_code == 200:
-            print(f"[✓] Отправлено: {filename}")
+            response = requests.post(FORM_URL, data=payload)
+            if response.status_code == 200:
+                print(f"[✓] Отправлено в Google Forms: {filename} (Категория: {call_category})")
+            else:
+                print(
+                    f"[✗] Ошибка отправки в Google Forms: {filename} — Status {response.status_code}. Ответ: {response.text}")
         else:
-            print(f"[✗] Ошибка: {filename} — Status {response.status_code}. Ответ: {response.text}")
+            print(f"⏩ Звонок {filename} (Категория: {call_category}). Пропуск отправки в Google Forms.")
 
-        counter += 1  # Увеличиваем счетчик для следующего звонка
+        # --- Логика отправки резюме в Telegram ---
+        if call_summary and (
+                call_category == "Заказ" or call_category == "Sotrudnichestvo" or call_category == "Сотрудничество"):
+            customer_link_formatted = f'<a href="{customer_card_link}">Посмотреть заказ</a>' if customer_card_link else 'Не найдена'  # Изменено для ссылки на карточку клиента
+
+            telegram_message = f"📞 <b>Отчет по звонку №{counter}</b>\n" \
+                               f"✨ <b>Категория:</b> <u>{call_category}</u>\n" \
+                               f"🗓️ {start_time.split(' ')[0] if start_time else 'Неизвестно'} | {call_type if call_type else 'Неизвестно'}\n\n" \
+                               f"👤 Менеджер: <b>{manager}</b>\n" \
+                               f"📱 Телефон клиента: <b>{phone_to_send if phone_to_send else 'Неизвестен'}</b>\n" \
+                               f"🔗 Ссылка на заказ: {customer_link_formatted}\n\n" \
+                               f"📝 <b>Резюме для РОПа:</b>\n{call_summary}"
+
+            send_telegram_message(telegram_message)
+        elif not call_summary:
+            print(f"ℹ️ Резюме для {filename} не найдено в анализе, в Telegram не отправлено.")
+        else:  # Категории, которые не "Заказ" и не "Сотрудничество" (например, "Курьер/Технический" или "Неизвестно")
+            print(f"⏩ Звонок {filename} (Категория: {call_category}). Пропуск отправки резюме в Telegram.")
+
+        counter += 1
+
+
+if __name__ == "__main__":
+    today = datetime.today().strftime("%d.%m.%Y")
+    folder_name = Path("analyses") / f"транскрибация_{today}"
+    send_analyses_to_google_form(folder_name)

@@ -3,6 +3,8 @@ import os
 import json
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from retailcrm_integration import get_customer_card_link_by_phone  # Исправлено: Импортируем правильное имя функции
+from pathlib import Path  # Импортируем Path для работы с путями
 
 # Загрузка токена из .env
 load_dotenv()
@@ -59,7 +61,8 @@ def get_next_call_index(directory):
 
 def download_record(call, index, target_dir):
     """
-    Скачивает запись конкретного звонка и сохраняет связанную с ним информацию.
+    Скачивает запись конкретного звонка, сохраняет связанную с ним информацию
+    и ищет ссылку на карточку клиента в RetailCRM.
     """
     talk_id = call.get("communication_id")
     records = call.get("call_records", [])
@@ -72,19 +75,19 @@ def download_record(call, index, target_dir):
     record_hash = records[0]  # Берём хеш первой записи звонка
     url = f"https://app.uiscom.ru/system/media/talk/{talk_id}/{record_hash}/"
 
-    filename = os.path.join(target_dir, f"call{index}.mp3")
-    info_filename = os.path.join(target_dir, f"call{index}_call_info.json")
+    filename = Path(target_dir) / f"call{index}.mp3"  # Используем Path
+    info_filename = Path(target_dir) / f"call{index}_call_info.json"  # Используем Path
 
-    if os.path.exists(filename):
-        print(f"⏭ Запись {filename} уже существует, пропускаем.")
+    if filename.exists():  # Используем .exists() для Path
+        print(f"⏭ Запись {filename.name} уже существует, пропускаем.")  # .name для чистого имени
     else:
-        print(f"⬇ Скачиваем {filename}...")
+        print(f"⬇ Скачиваем {filename.name}...")
         try:
             response = requests.get(url)
             if response.status_code == 200:
                 with open(filename, 'wb') as f:
                     f.write(response.content)
-                print(f"✅ Сохранено: {filename}")
+                print(f"✅ Сохранено: {filename.name}")
             else:
                 print(f"⚠ Ошибка скачивания {url}: HTTP {response.status_code}")
         except requests.exceptions.RequestException as e:
@@ -92,15 +95,28 @@ def download_record(call, index, target_dir):
         except Exception as e:
             print(f"❌ Неизвестная ошибка при скачивании {talk_id}: {e}")
 
-    # Сохраняем информацию о звонке
+    # --- Новая логика для получения ссылки на карточку клиента из RetailCRM ---
+    customer_card_link = "" # Переименовано с order_link на customer_card_link
+    contact_phone = call.get("contact_phone_number", "")  # Исправлено: "contact_phone_number" находится не в "raw"
+
+    print(
+        f"DEBUG: Номер телефона клиента из UIS звонка для поиска карточки клиента: {contact_phone}")  # <-- Добавлено отладочное сообщение
+    if contact_phone:
+        customer_card_link = get_customer_card_link_by_phone(contact_phone) # Исправлено: вызываем правильную функцию
+    else:
+        print("DEBUG: Номер телефона клиента отсутствует в данных звонка UIS. Ссылка на карточку клиента не будет искаться.")
+    # ------------------------------------------------------------------
+
+    # Сохраняем информацию о звонке, теперь включая ссылку на карточку клиента
     try:
         call_info = {
             "start_time": call.get("start_time", ""),
-            "raw": call  # Сохраняем все сырые данные звонка для полноты
+            "raw": call,  # Сохраняем все сырые данные звонка для полноты
+            "customer_card_link": customer_card_link  # Добавляем ссылку на карточку клиента
         }
         with open(info_filename, 'w', encoding='utf-8') as f:
             json.dump(call_info, f, indent=2, ensure_ascii=False)
-        print(f"📝 Сохранена информация: {info_filename}")
+        print(f"📝 Сохранена информация: {info_filename.name}")  # .name для чистого имени
     except Exception as e:
         print(f"❌ Ошибка при сохранении call_info для {talk_id}: {e}")
 
@@ -118,10 +134,10 @@ def download_calls():
     # --- Коррекция временного промежутка для получения ЗВОНКОВ ЗА ВЧЕРАШНИЙ ДЕНЬ ---
     yesterday = datetime.now().astimezone() - timedelta(days=1)
 
-    # Дата начала вчерашнего дня (00:00:00)
-    date_from = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
-    # Дата окончания вчерашнего дня (23:59:59)
-    date_to = yesterday.replace(hour=23, minute=59, second=59, microsecond=0)
+    # Дата начала вчерашнего дня (12:00:00)
+    date_from = yesterday.replace(hour=12, minute=0, second=0, microsecond=0)
+    # Дата окончания вчерашнего дня (13:59:59 - чтобы охватить до 14:00, но не включая 14:00:00 следующего часа)
+    date_to = yesterday.replace(hour=15, minute=20, second=59, microsecond=0)
     # -------------------------------------------------------------------------
 
     date_from_str = date_from.strftime("%Y-%m-%d %H:%M:%S")
@@ -129,8 +145,9 @@ def download_calls():
 
     # Формируем имя папки на основе даты "from"
     folder_date = date_from.strftime("%d.%m.%Y")
-    target_dir = os.path.join("audio", f"звонки_{folder_date}")
-    os.makedirs(target_dir, exist_ok=True)  # Создаем папку, если ее нет
+    target_dir = Path("audio") / f"звонки_{folder_date}"  # Используем Path
+    target_dir.mkdir(parents=True, exist_ok=True)  # Используем mkdir для Path
+    print(f"Проверяем или создаем папку для звонков: {target_dir}")
 
     try:
         calls = get_calls_report(date_from_str, date_to_str)
@@ -141,11 +158,11 @@ def download_calls():
         # Если есть звонки, выводим пример первого для отладки
         print("📦 Пример содержимого первого вызова:", json.dumps(calls[0], indent=2, ensure_ascii=False))
 
-        current_idx = get_next_call_index(target_dir)  # Получаем стартовый индекс
+        current_idx = get_next_call_index(str(target_dir))  # get_next_call_index ожидает строку
         for call in calls:
             print(f"\n🔹 Звонок #{current_idx}:")
             # print(json.dumps(call, indent=2, ensure_ascii=False)) # Можно раскомментировать для детальной отладки
-            download_record(call, current_idx, target_dir)
+            download_record(call, current_idx, target_dir)  # target_dir теперь Path объект
             current_idx += 1  # Увеличиваем индекс для следующего звонка
 
     except Exception as e:
