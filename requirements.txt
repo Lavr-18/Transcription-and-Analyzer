@@ -1,0 +1,4 @@
+dotenv~=0.9.9
+python-dotenv~=1.1.1
+openai~=1.100.0
+requests~=2.32.4
