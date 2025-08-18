@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  transcription_app:
+    build: .
+    container_name: transcription_app
+    restart: always
+    volumes:
+      # Монтируем локальные папки на хост-машине
+      - ./audio:/usr/src/app/audio
+      - ./transcripts:/usr/src/app/transcripts
+      - ./analyses:/usr/src/app/analyses
+    env_file:
+      # Загружаем переменные окружения из .env файла
+      - .env
