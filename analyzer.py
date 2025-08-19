@@ -6,19 +6,18 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
-
 # Импортируем функцию для получения имени менеджера из CRM
 # Убедитесь, что retailcrm_integration.py находится в той же директории или в PYTHONPATH
 try:
     from retailcrm_integration import get_manager_name_from_crm
 except ImportError:
-    print(
-        "ВНИМАНИЕ: Модуль retailcrm_integration не найден или get_manager_name_from_crm не определена. Убедитесь, что он существует и доступен.")
-
+    print("ВНИМАНИЕ: Модуль retailcrm_integration не найден или get_manager_name_from_crm не определена. Убедитесь, что он существует и доступен.")
     # Если модуль не найден, определяем заглушку, чтобы код продолжал работать.
-    def get_manager_name_from_crm() -> str:
+
+    def get_manager_name_from_crm(phone_number: str) -> str:
         print("  ⚠️ Заглушка: retailcrm_integration.get_manager_name_from_crm не реализована. Возвращаем 'Неизвестно'.")
         return "Неизвестно"
+
 
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -262,8 +261,7 @@ def categorize_call_by_metadata(raw_call_data: dict) -> str:
     return "Заказ"  # Или "Неизвестно", если хотите, чтобы LLM определял это
 
 
-def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str, initial_category: str,
-                              phone_number: str | None = None):
+def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str, initial_category: str, phone_number: str | None = None):
     """
     Проводит анализ одного транскрипта и сохраняет результат в виде JSON-файла.
 
@@ -333,9 +331,9 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
                     if score in [1, 0, -1]:
                         filtered_result[key] = score
                     else:
-                        print(
-                            f"⚠️ Предупреждение: Некорректный балл {score} для критерия '{key}' в файле {filename}. Устанавливаем 0.")
+                        print(f"⚠️ Предупреждение: Некорректный балл {score} для критерия '{key}' в файле {filename}. Устанавливаем 0.")
                         filtered_result[key] = 0
+
 
             manager_name_from_llm = result_dict.get("manager_name")
             if manager_name_from_llm in ALLOWED_MANAGERS:
@@ -358,17 +356,17 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
     # --- Запасной вариант: Если имя менеджера не определено LLM, пытаемся получить его из CRM ---
     if filtered_result["manager_name"] == "Неизвестно" and phone_number:
         print(f"ℹ️ Имя менеджера не определено LLM. Пытаемся получить из CRM для номера: {phone_number}")
-        crm_manager_name = get_manager_name_from_crm()
-        if crm_manager_name:  # Если CRM вернула имя (не None)
+        crm_manager_name = get_manager_name_from_crm(phone_number)
+        if crm_manager_name: # Если CRM вернула имя (не None)
             # Проверяем, что имя из CRM также находится в списке разрешенных менеджеров
             if crm_manager_name in ALLOWED_MANAGERS:
                 filtered_result["manager_name"] = crm_manager_name
                 print(f"✅ Имя менеджера успешно получено из CRM: {crm_manager_name}")
             else:
-                print(
-                    f"⚠️ Имя менеджера '{crm_manager_name}' из CRM не найдено в списке разрешенных. Оставляем 'Неизвестно'.")
+                print(f"⚠️ Имя менеджера '{crm_manager_name}' из CRM не найдено в списке разрешенных. Оставляем 'Неизвестно'.")
         else:
             print("ℹ️ Не удалось получить имя менеджера из CRM.")
+
 
     if not success:
         fail_path = output_folder / f"{filename.replace('.txt', '')}_raw.txt"
@@ -378,11 +376,11 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
 
         # Если анализ не удался, но мы смогли получить менеджера из CRM, сохраняем его
         # Проверяем, что manager_name не был установлен CRM, прежде чем сбрасывать его
-        if filtered_result["manager_name"] == "Неизвестно":  # Только если CRM тоже не помогла
+        if filtered_result["manager_name"] == "Неизвестно": # Только если CRM тоже не помогла
             filtered_result["manager_name"] = "Неизвестно"
         filtered_result["summary"] = "Ошибка анализа: не удалось сгенерировать корректные данные."
         filtered_result["call_category"] = "Неизвестно"  # Устанавливаем категорию по умолчанию
-        for key in CRITERIA:  # Сброс критериев, если LLM не сгенерировал корректный JSON
+        for key in CRITERIA: # Сброс критериев, если LLM не сгенерировал корректный JSON
             # Не сбрасываем manager_name, так как он уже обработан выше
             filtered_result[key] = 0
 
@@ -405,7 +403,7 @@ def analyze_transcripts(target_date_str: str):
         target_date_str (str): Дата, за которую нужно анализировать транскрипты, в формате "ДД.ММ.ГГГГ".
     """
     transcripts_folder = Path("transcripts") / f"транскрибация_{target_date_str}"
-    audio_calls_folder = Path("audio") / f"звонки_{target_date_str}"  # Добавляем путь к папке с аудио-информацией
+    audio_calls_folder = Path("audio") / f"звонки_{target_date_str}" # Добавляем путь к папке с аудио-информацией
 
     if not transcripts_folder.exists():
         print(f"Папка с транскриптами не найдена: {transcripts_folder}. Пропускаем анализ.")
@@ -437,8 +435,8 @@ def analyze_transcripts(target_date_str: str):
                 except Exception as e:
                     print(f"Ошибка при чтении или обработке {info_path}: {e}")
             else:
-                print(
-                    f"Предупреждение: Файл информации о звонке не найден для {base_name}: {info_path}. Используем категорию по умолчанию.")
+                print(f"Предупреждение: Файл информации о звонке не найден для {base_name}: {info_path}. Используем категорию по умолчанию.")
+
 
             print(f"  Анализируем: {filename} (Начальная категория: {initial_category})")
             # Передаем извлеченный номер телефона в analyze_single_transcript

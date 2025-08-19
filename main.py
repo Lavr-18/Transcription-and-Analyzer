@@ -83,7 +83,7 @@ def run_processing_pipeline():
     clean_old_folders(Path("analyses"), 1)
 
     # Определение периодов обработки по времени суток
-    if current_hour_msk == 12:
+    if current_hour_msk == 13:
         yesterday_date_msk = current_date_msk - timedelta(days=1)
         print("Определен период обработки: утренние звонки (с вечера вчера до полудня сегодня)")
         start_time_period = datetime.combine(yesterday_date_msk, datetime.min.time().replace(hour=19), tzinfo=MSK)
