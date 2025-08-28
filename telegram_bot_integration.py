@@ -17,6 +17,9 @@ ROP_CHAT_IDS_STR = os.getenv("ROP_CHAT_IDS")
 ROP_CHAT_IDS = [chat_id.strip() for chat_id in ROP_CHAT_IDS_STR.split(',') if
                 chat_id.strip()] if ROP_CHAT_IDS_STR else []
 
+# Добавляем новую переменную для ID подгруппы (темы)
+ANALYSIS_TOPIC_ID = os.getenv("ANALYSIS_TOPIC_ID")
+
 
 def send_telegram_message(message: str) -> bool:
     """
@@ -42,20 +45,25 @@ def send_telegram_message(message: str) -> bool:
         payload = {
             "chat_id": chat_id,
             "text": message,
-            "parse_mode": "HTML"  # Можно использовать "MarkdownV2" или "HTML" для форматирования
+            "parse_mode": "HTML"
         }
+
+        # Добавляем ID темы, только если он существует
+        if ANALYSIS_TOPIC_ID:
+            payload["message_thread_id"] = ANALYSIS_TOPIC_ID
 
         try:
             response = requests.post(url, data=payload)
-            response.raise_for_status()  # Вызывает исключение для HTTP ошибок (4xx или 5xx)
+            response.raise_for_status()
             response_json = response.json()
 
             if response_json.get("ok"):
-                print(f"✅ Сообщение в Telegram успешно отправлено в чат ID: {chat_id}")
+                topic_info = f", тема: {ANALYSIS_TOPIC_ID}" if ANALYSIS_TOPIC_ID else ""
+                print(f"✅ Сообщение в Telegram успешно отправлено в чат ID: {chat_id}{topic_info}")
             else:
                 print(
                     f"❌ Ошибка отправки в Telegram в чат ID: {chat_id} — {response_json.get('description', 'Неизвестная ошибка')}")
-                all_sent_successfully = False  # Если хотя бы одно сообщение не отправлено, флаг меняется
+                all_sent_successfully = False
         except requests.exceptions.RequestException as e:
             print(f"❌ Ошибка сетевого запроса при отправке в Telegram в чат ID: {chat_id} — {e}")
             all_sent_successfully = False
