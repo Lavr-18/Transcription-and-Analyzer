@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  transcription_bot:
+    build: .
+    volumes:
+      - ./audio:/app/audio
+      - ./transcripts:/app/transcripts
+      - ./analyses:/app/analyses
+      - ./.env:/app/.env
