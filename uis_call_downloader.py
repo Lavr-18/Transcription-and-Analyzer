@@ -108,9 +108,9 @@ def download_record(call, index, target_dir) -> Path | None:
     records = call.get("call_records", [])
     total_duration = _get_call_duration(call)
 
-    if not talk_id or not records or total_duration is None or total_duration < 20:
+    if not talk_id or not records or total_duration is None or total_duration < 60:
         print(
-            f"⏩ Пропускаем звонок {call.get('communication_id', 'N/A')} из-за отсутствия информации или длительности < 20с. Длительность: {total_duration}s")
+            f"⏩ Пропускаем звонок {call.get('communication_id', 'N/A')} из-за отсутствия информации или длительности < 60с. Длительность: {total_duration}s")
         return None
 
     record_hash = records[0]
