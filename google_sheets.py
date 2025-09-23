@@ -122,12 +122,17 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
         analysis_data = {}
         call_category = "Неизвестно"
         call_number_from_file = get_call_number_from_filename(filename)
+        # Инициализируем ссылку на заказ здесь, чтобы использовать её ниже
+        order_link = ""
 
         try:
             with open(analysis_path, "r", encoding="utf-8") as f:
                 analysis_data = json.load(f)
                 call_summary = analysis_data.get("summary", "")
                 call_category = analysis_data.get("call_category", "Неизвестно")
+                # НОВОЕ: Считываем ссылку на заказ прямо из файла анализа
+                order_link = analysis_data.get("order_link", "")
+
         except FileNotFoundError:
             print(f"Предупреждение: Файл анализа не найден для {base_name}: {analysis_path}. Пропуск.")
             continue
@@ -140,10 +145,9 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
 
         start_time = ""
         call_type_with_duration = "Неизвестно"
-        order_link = ""
-        record_link = ""  # НОВОЕ: Инициализация ссылки на запись звонка
+        record_link = ""
         contact_phone_number = ""
-        transcript_content = ""  # НОВОЕ: Инициализация содержимого транскрипции
+        transcript_content = ""
 
         if info_path.exists():
             try:
@@ -153,7 +157,7 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
                 start_time = call_info.get("start_time", "")
                 direction = call_info.get("raw", {}).get("direction", "")
                 total_duration_seconds = call_info.get("raw", {}).get("total_duration")
-                record_link = call_info.get("record_link", "")  # НОВОЕ: Извлекаем record_link
+                record_link = call_info.get("record_link", "")
 
                 duration_formatted = format_duration(total_duration_seconds)
 
@@ -164,7 +168,6 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
                 else:
                     call_type_with_duration = f"Неизвестно ({duration_formatted})"
 
-                order_link = call_info.get("customer_card_link", "")
                 contact_phone_number = call_info.get("contact_phone_number", "")
                 if not contact_phone_number:
                     contact_phone_number = call_info.get("raw", {}).get("contact_phone_number", "")
@@ -176,7 +179,7 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
         else:
             print(f"Предупреждение: Файл информации о звонке не найден для {base_name}: {info_path}")
 
-        # НОВОЕ: Чтение содержимого транскрипции
+        # Чтение содержимого транскрипции
         if transcript_file_path.exists():
             try:
                 with open(transcript_file_path, "r", encoding="utf-8") as f:
@@ -233,7 +236,7 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
         # --- Логика отправки резюме в Telegram ---
         if call_summary and call_category in ["Заказ", "Сотрудничество"]:
             order_link_formatted = f'<a href="{order_link}">Посмотреть заказ</a>' if order_link else 'Не найдена'
-            record_link_formatted = f'<a href="{record_link}">Прослушать звонок</a>' if record_link else 'Не найдена'  # НОВОЕ: Ссылка на запись
+            record_link_formatted = f'<a href="{record_link}">Прослушать звонок</a>' if record_link else 'Не найдена'
 
             telegram_message = f"📞 <b>Отчет по звонку №{call_number_from_file}</b>\n" \
                                f"✨ <b>Категория:</b> <u>{call_category}</u>\n" \

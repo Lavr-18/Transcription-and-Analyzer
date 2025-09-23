@@ -6,17 +6,24 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
-# Импортируем функцию для получения имени менеджера из CRM
-# Убедитесь, что retailcrm_integration.py находится в той же директории или в PYTHONPATH
-try:
-    from retailcrm_integration import get_manager_name_from_crm
-except ImportError:
-    print("ВНИМАНИЕ: Модуль retailcrm_integration не найден или get_manager_name_from_crm не определена. Убедитесь, что он существует и доступен.")
-    # Если модуль не найден, определяем заглушку, чтобы код продолжал работать.
 
+# Попытка импорта всех необходимых функций из retailcrm_integration
+try:
+    from retailcrm_integration import get_manager_name_from_crm, get_order_link_by_phone
+except ImportError:
+    print(
+        "ВНИМАНИЕ: Модуль retailcrm_integration не найден или функции не определены. Убедитесь, что он существует и доступен.")
+
+
+    # Заглушки, чтобы код продолжал работать без ошибок
     def get_manager_name_from_crm(phone_number: str) -> str:
-        print("  ⚠️ Заглушка: retailcrm_integration.get_manager_name_from_crm не реализована. Возвращаем 'Неизвестно'.")
+        print("  ⚠️ Заглушка: get_manager_name_from_crm не реализована. Возвращаем 'Неизвестно'.")
         return "Неизвестно"
+
+
+    def get_order_link_by_phone(phone_number: str) -> str:
+        print("  ⚠️ Заглушка: get_order_link_by_phone не реализована. Возвращаем ''.")
+        return ""
 
 
 load_dotenv()
@@ -261,15 +268,10 @@ def categorize_call_by_metadata(raw_call_data: dict) -> str:
     return "Заказ"  # Или "Неизвестно", если хотите, чтобы LLM определял это
 
 
-def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str, initial_category: str, phone_number: str | None = None):
+def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str, initial_category: str,
+                              phone_number: str | None = None):
     """
     Проводит анализ одного транскрипта и сохраняет результат в виде JSON-файла.
-
-    Args:
-        transcript_path (Path): Путь к файлу транскрипта.
-        target_folder_date_str (str): Дата папки для сохранения анализов.
-        initial_category (str): Начальная категория звонка (может быть переопределена LLM).
-        phone_number (str | None): Номер телефона, извлеченный из имени файла, для CRM-запроса.
     """
     output_folder = Path("analyses") / f"транскрибация_{target_folder_date_str}"
     os.makedirs(output_folder, exist_ok=True)
@@ -278,18 +280,28 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
     with open(transcript_path, "r", encoding="utf-8") as f:
         transcript = f.read()
 
-    # Форматируем PROMPT_TEMPLATE, передавая все необходимые аргументы
+    # Форматируем PROMPT_TEMPLATE
     prompt = PROMPT_TEMPLATE.format(
-        ", ".join(CALL_CATEGORIES),  # Для первого {} (список категорий)
-        ", ".join(ALLOWED_MANAGERS),  # Для второго {} (список менеджеров)
-        transcript=transcript  # Для {transcript}
+        ", ".join(CALL_CATEGORIES),
+        ", ".join(ALLOWED_MANAGERS),
+        transcript=transcript
     )
 
     success = False
     filtered_result = {key: 0 for key in CRITERIA}
     filtered_result["manager_name"] = "Неизвестно"
     filtered_result["summary"] = ""
-    filtered_result["call_category"] = initial_category  # Используем начальную категорию
+    filtered_result["call_category"] = initial_category
+
+    # --- НОВЫЙ БЛОК: Поиск ссылки на заказ ---
+    order_link = ""
+    if phone_number:
+        print(f"🔗 Поиск ссылки на заказ для номера: {phone_number}...")
+        order_link = get_order_link_by_phone(phone_number)
+        print(f"🔗 Результат: {order_link or 'Не найдена'}")
+    else:
+        print("🔗 Номер телефона не найден. Пропускаем поиск ссылки на заказ.")
+    # --- КОНЕЦ НОВОГО БЛОКА ---
 
     for attempt in range(3):
         try:
@@ -299,26 +311,22 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
                 temperature=0,
             )
             raw_content = response.choices[0].message.content
-
             json_str = clean_json_string(raw_content)
             result_dict = json.loads(json_str)
 
-            # Извлекаем категорию звонка из LLM, если LLM ее предоставил и она валидна
             call_category_from_llm = result_dict.get("call_category")
             if call_category_from_llm in CALL_CATEGORIES:
                 filtered_result["call_category"] = call_category_from_llm
             else:
-                # Если LLM не предоставил или предоставил невалидную, используем initial_category
                 print(
-                    f"⚠️ Предупреждение: Неизвестная категория звонка от LLM: {call_category_from_llm}. Используется начальная категория: {initial_category}.")
+                    f"⚠️ Неизвестная категория звонка от LLM: {call_category_from_llm}. Используется начальная категория: {initial_category}.")
                 filtered_result["call_category"] = initial_category
 
             analysis_summary = extract_summary(raw_content)
             if not analysis_summary:
-                print(f"⚠️ Предупреждение: Резюме для {filename} пустое.")
+                print(f"⚠️ Резюме для {filename} пустое.")
                 analysis_summary = "Резюме не сгенерировано."
 
-            # Если категория не "Заказ", то устанавливаем все критерии (кроме manager_name и summary) в 0
             if filtered_result["call_category"] != "Заказ":
                 for key in CRITERIA:
                     filtered_result[key] = 0
@@ -326,14 +334,12 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
                     f"ℹ️ Звонок {filename} определен как '{filtered_result['call_category']}'. Критерии анализа продаж установлены в 0.")
             else:
                 for key in CRITERIA:
-                    # Убедимся, что значения 1, 0, -1
                     score = result_dict.get(key)
                     if score in [1, 0, -1]:
                         filtered_result[key] = score
                     else:
-                        print(f"⚠️ Предупреждение: Некорректный балл {score} для критерия '{key}' в файле {filename}. Устанавливаем 0.")
+                        print(f"⚠️ Некорректный балл {score} для критерия '{key}' в файле {filename}. Устанавливаем 0.")
                         filtered_result[key] = 0
-
 
             manager_name_from_llm = result_dict.get("manager_name")
             if manager_name_from_llm in ALLOWED_MANAGERS:
@@ -342,7 +348,6 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
                 filtered_result["manager_name"] = "Неизвестно"
 
             filtered_result["summary"] = analysis_summary
-
             success = True
             break
         except json.JSONDecodeError as e:
@@ -353,42 +358,36 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
             print(f"⚠️ Непредвиденная ошибка при генерации/парсинге для {filename} (попытка {attempt + 1}): {e}")
             time.sleep(2)
 
-    # --- Запасной вариант: Если имя менеджера не определено LLM, пытаемся получить его из CRM ---
     if filtered_result["manager_name"] == "Неизвестно" and phone_number:
         print(f"ℹ️ Имя менеджера не определено LLM. Пытаемся получить из CRM для номера: {phone_number}")
         crm_manager_name = get_manager_name_from_crm(phone_number)
-        if crm_manager_name: # Если CRM вернула имя (не None)
-            # Проверяем, что имя из CRM также находится в списке разрешенных менеджеров
-            if crm_manager_name in ALLOWED_MANAGERS:
-                filtered_result["manager_name"] = crm_manager_name
-                print(f"✅ Имя менеджера успешно получено из CRM: {crm_manager_name}")
-            else:
-                print(f"⚠️ Имя менеджера '{crm_manager_name}' из CRM не найдено в списке разрешенных. Оставляем 'Неизвестно'.")
+        if crm_manager_name and crm_manager_name in ALLOWED_MANAGERS:
+            filtered_result["manager_name"] = crm_manager_name
+            print(f"✅ Имя менеджера успешно получено из CRM: {crm_manager_name}")
         else:
             print("ℹ️ Не удалось получить имя менеджера из CRM.")
-
 
     if not success:
         fail_path = output_folder / f"{filename.replace('.txt', '')}_raw.txt"
         with open(fail_path, "w", encoding="utf-8") as f:
             f.write(transcript)
         print(f"❌ Не удалось проанализировать: {filename} — исходный транскрипт сохранён как {fail_path}")
-
-        # Если анализ не удался, но мы смогли получить менеджера из CRM, сохраняем его
-        # Проверяем, что manager_name не был установлен CRM, прежде чем сбрасывать его
-        if filtered_result["manager_name"] == "Неизвестно": # Только если CRM тоже не помогла
+        if filtered_result["manager_name"] == "Неизвестно":
             filtered_result["manager_name"] = "Неизвестно"
         filtered_result["summary"] = "Ошибка анализа: не удалось сгенерировать корректные данные."
-        filtered_result["call_category"] = "Неизвестно"  # Устанавливаем категорию по умолчанию
-        for key in CRITERIA: # Сброс критериев, если LLM не сгенерировал корректный JSON
-            # Не сбрасываем manager_name, так как он уже обработан выше
+        filtered_result["call_category"] = "Неизвестно"
+        for key in CRITERIA:
             filtered_result[key] = 0
 
-    # Сохраняем анализ, только если это не "Курьер/Технический" звонок
     if filtered_result["call_category"] != "Курьер/Технический":
         out_path = output_folder / f"{transcript_path.stem}_analysis.json"
+
+        # Добавляем order_link в данные, которые будут сохранены в JSON
+        final_analysis_data = filtered_result.copy()
+        final_analysis_data["order_link"] = order_link
+
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(filtered_result, f, ensure_ascii=False, indent=2)
+            json.dump(final_analysis_data, f, ensure_ascii=False, indent=2)
         print(f"✅ Анализ сохранён: {out_path}")
     else:
         print(f"⏩ Звонок {filename} определен как 'Курьер/Технический'. Анализ не сохранен.")
