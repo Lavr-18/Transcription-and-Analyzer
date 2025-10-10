@@ -318,7 +318,7 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
             )
