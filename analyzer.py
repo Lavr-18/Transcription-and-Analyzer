@@ -6,12 +6,12 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any  # Добавлен импорт Dict, Any
+from typing import Dict, Any
 
 # Попытка импорта всех необходимых функций из retailcrm_integration
 try:
     from retailcrm_integration import get_manager_name_from_crm, get_order_link_by_phone, \
-        get_order_items_status  # ИМПОРТ НОВОЙ ФУНКЦИИ
+        get_order_items_status
 except ImportError:
     print(
         "ВНИМАНИЕ: Модуль retailcrm_integration не найден или функции не определены. Убедитесь, что он существует и доступен.")
@@ -174,7 +174,7 @@ PROMPT_TEMPLATE = '''Ты эксперт по продажам, анализир
 Строго JSON формат для оценок критериев, имени менеджера и категории звонка. После JSON блока должна быть строка `---SUMMARY---`, а затем краткое резюме звонка с ключевыми выводами для РОПа.
 
 **Инструкции для резюме (summary):**
-Резюме должно быть структурированным и содержать ключевые выводы для РОПа, отвечая на следующие вопросы. Используй HTML-тег `<b>` для выделения заголовков жирным шрифтом и разделяй каждый пункт пустой строкой, чтобы улучшить читаемость.
+Резюме должно быть структурированным и содержать ключевые выводы для РОПа, отвечая на следующие вопросы. Используй HTML-тег `<b>` для выделения заголовков жирным жирным шрифтом и разделяй каждый пункт пустой строкой, чтобы улучшить читаемость.
 * <b>Исход звонка:</b> Чем закончился разговор (обратная связь позже, заказ, отказ, визит в шоурум, запрос информации и т.д.).
 * <b>Квалификация:</b> Какие вопросы менеджер задал по квалификации (например, по бюджету, срокам) или почему не задал.
 * <b>Выявление потребностей:</b> Какие вопросы менеджер задал для выявления потребностей клиента или почему не задал.
@@ -320,7 +320,6 @@ def analyze_single_transcript(transcript_path: Path, target_folder_date_str: str
             response = client.chat.completions.create(
                 model="gpt-5-mini",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0,
             )
             raw_content = response.choices[0].message.content
             json_str = clean_json_string(raw_content)
@@ -469,7 +468,46 @@ def analyze_transcripts(target_date_str: str):
     print(f"Анализ транскриптов для {target_date_str} завершен.")
 
 
+# УДАЛЕНИЕ: Функция test_openai_api удалена, так как она больше не нужна.
+
+# ТЕСТОВЫЙ БЛОК, ИМИТИРУЮЩИЙ РАБОТУ ОСНОВНОГО ПАЙПЛАЙНА
 if __name__ == "__main__":
-    # Для тестирования модуля отдельно, используйте текущую дату
-    today_str = datetime.today().strftime("%d.%m.%Y")
-    analyze_transcripts(today_str)
+    TEST_TRANSCRIPT = """Менеджер: Добрый день. Это магазин «Тропик Хаус». Меня зовут Настасья. Я чем могу помочь?  
+Клиент: Здравствуйте, девушка. Я сегодня сейчас только что сделала заказ.  
+Менеджер: Угу.  
+Клиент: И проспела бы прям доставку максимально быстро. Скажите, пожалуйста, как это можно сделать?  
+Менеджер: Так, секунду. Подскажите, как вас зовут?  
+Клиент: Карина.  
+Менеджер: Угу. Карина, очень приятно. Так, сейчас посмотрим ваш заказ. Секундочку.  
+Клиент: Угу.  """
+
+    TEST_FILENAME = "test_call_12345_79001112233.txt"
+    TEST_DATE_STR = datetime.today().strftime("%d.%m.%Y")
+
+    # 1. Создание тестовой папки и файла
+    temp_transcripts_folder = Path("transcripts") / f"транскрибация_{TEST_DATE_STR}"
+    os.makedirs(temp_transcripts_folder, exist_ok=True)
+    temp_transcript_path = temp_transcripts_folder / TEST_FILENAME
+
+    with open(temp_transcript_path, "w", encoding="utf-8") as f:
+        f.write(TEST_TRANSCRIPT)
+
+    # 2. Имитация запуска анализа
+    print("--- ЗАПУСК ТЕСТОВОГО АНАЛИЗА ---")
+
+    # Извлекаем номер и начальную категорию для теста
+    test_phone = "79001112233"
+    test_initial_category = "Заказ"  # Устанавливаем вручную для имитации, что это не короткий звонок
+
+    analyze_single_transcript(
+        transcript_path=temp_transcript_path,
+        target_folder_date_str=TEST_DATE_STR,
+        initial_category=test_initial_category,
+        phone_number=test_phone
+    )
+
+    # 3. Очистка тестовых файлов (по желанию, для чистоты)
+    # temp_transcript_path.unlink()
+    # temp_transcripts_folder.rmdir()
+
+    print("--- ТЕСТОВЫЙ АНАЛИЗ ЗАВЕРШЕН ---")
