@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from pathlib import Path
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Добавляем корневую директорию проекта в sys.path для импорта retailcrm_integration
 import sys
@@ -16,8 +16,8 @@ if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
 # Импортируем из розницы
-# ИСПРАВЛЕНИЕ: Замена check_if_phone_has_excluded_order на check_if_last_order_is_analyzable
-from retailcrm_integration import check_if_last_order_is_analyzable, check_if_phone_has_recent_order
+# ИСПРАВЛЕНИЕ: Оставлена только check_if_last_order_is_analyzable, так как check_if_phone_has_recent_order больше не используется для фильтрации.
+from retailcrm_integration import check_if_last_order_is_analyzable
 
 # Load token from .env
 load_dotenv()
@@ -27,7 +27,7 @@ ACCESS_TOKEN = os.getenv("UIS_API_TOKEN")
 MSK = timezone(timedelta(hours=3))
 
 
-def get_calls_report(date_from, date_to) -> List[Dict[str, Any]]:
+def get_calls_report(date_from: str, date_to: str) -> List[Dict[str, Any]]:
     """
     Retrieves call report from UIS server for a specified period.
     Returns a list of call metadata (dictionaries).
@@ -75,7 +75,7 @@ def get_calls_report(date_from, date_to) -> List[Dict[str, Any]]:
             return []
 
 
-def get_next_call_index(directory):
+def get_next_call_index(directory: str) -> int:
     """
     Определяет следующий доступный индекс для нового файла звонка.
     """
@@ -93,7 +93,7 @@ def get_next_call_index(directory):
     return max(used_indexes, default=0) + 1
 
 
-def _get_call_duration(call: dict) -> int | None:
+def _get_call_duration(call: dict) -> Optional[int]:
     """Вспомогательная функция для надежного получения длительности звонка."""
     duration = call.get("total_duration")
     if duration is None:
@@ -101,7 +101,7 @@ def _get_call_duration(call: dict) -> int | None:
     return duration
 
 
-def download_record(call, index, target_dir) -> Path | None:
+def download_record(call: Dict[str, Any], index: int, target_dir: Path) -> Optional[Path]:
     """
     Загружает конкретную запись звонка и сохраняет информацию о нем.
     Возвращает путь к созданному файлу call_info.json.
@@ -120,7 +120,7 @@ def download_record(call, index, target_dir) -> Path | None:
 
     # Используем более надежный способ получения номера и направления
     contact_phone = call.get("contact_phone_number") or call.get("raw", {}).get("contact_phone_number", "")
-    call_direction = call.get("direction") or call.get("raw", {}).get("direction")
+    # call_direction = call.get("direction") or call.get("raw", {}).get("direction") # не используется
 
     base_filename = f"call{index}"
     if contact_phone:
@@ -164,7 +164,7 @@ def download_record(call, index, target_dir) -> Path | None:
         print(f"❌ Ошибка сохранения информации о звонке для {talk_id}: {e}")
         return None
 
-# Эта функция была перемещена из тестового блока, чтобы её можно было импортировать
+
 def download_calls(calls_to_download: List[Dict[str, Any]], target_dir: Path) -> List[Path]:
     """
     Загружает только те звонки, которые переданы в списке.
@@ -232,26 +232,16 @@ if __name__ == "__main__":
                 print(f"❌ Пропускаем: отсутствует номер ({phone_number}) или направление ({call_direction}) звонка.")
                 continue
 
-            if call_direction == "in":
-                # ИЗМЕНЕНИЕ: Используем новую функцию check_if_last_order_is_analyzable
-                print(f"  ➡️ Направление: ВХОДЯЩИЙ. Проверяем, разрешен ли последний заказ к анализу...")
+            # ИСПРАВЛЕНИЕ: Унифицированная фильтрация по статусу последнего заказа для IN и OUT звонков
+            if call_direction == "in" or call_direction == "out":
+                print(f"  ➡️ Направление: {call_direction.upper()}. Проверяем, разрешен ли последний заказ к анализу...")
                 is_analyzable = check_if_last_order_is_analyzable(phone_number)
                 if is_analyzable:
                     print(f"  ✅ Звонок прошел фильтр: последний заказ разрешен к анализу (или заказов нет). Добавляем в список для обработки.")
                     filtered_calls.append(call)
                 else:
-                    # В новой логике False означает, что последний заказ в НЕанализируемом статусе (Закупка, Комплектация, Доставка)
+                    # В новой логике False означает, что последний заказ в НЕанализируемом статусе
                     print(f"  ❌ Звонок НЕ прошел фильтр: последний заказ НЕ разрешен к анализу. Пропускаем.")
-
-            elif call_direction == "out":
-                print(f"  ➡️ Направление: ИСХОДЯЩИЙ. Проверяем, есть ли недавний заказ...")
-                has_recent = check_if_phone_has_recent_order(phone_number)
-                if has_recent:
-                    print(f"  ✅ Звонок прошел фильтр: есть недавний заказ. Добавляем в список для обработки.")
-                    filtered_calls.append(call)
-                else:
-                    print(f"  ❌ Звонок НЕ прошел фильтр: нет недавнего заказа. Пропускаем.")
-
             else:
                 print(f"  ⚠️ Неизвестное направление звонка: {call_direction}. Пропускаем.")
 
@@ -267,4 +257,3 @@ if __name__ == "__main__":
         print("Нет звонков для тестирования в указанном периоде.")
 
     print("\nТестирование завершено.")
-

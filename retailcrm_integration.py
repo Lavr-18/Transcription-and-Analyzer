@@ -120,6 +120,31 @@ def _get_last_order(phone_number: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ ПРОВЕРКИ НА ПОВТОРНЫЙ АНАЛИЗ (Добавлено) ---
+def get_last_order_link_for_check(phone_number: str) -> Optional[str]:
+    """
+    Находит ID последнего заказа и формирует его прямую ссылку.
+    Используется для проверки, был ли этот заказ уже проанализирован (т.е. есть ли он в Google Sheets).
+
+    Args:
+        phone_number: Номер телефона клиента.
+
+    Returns:
+        Прямая ссылка на последний заказ в RetailCRM или None, если заказ не найден.
+    """
+    last_order = _get_last_order(phone_number)
+
+    if last_order and isinstance(last_order, dict):
+        order_id = last_order.get('id')
+        if order_id:
+            # Формируем ссылку в том же виде, в котором она хранится в Google Sheets
+            order_link = f"{RETAILCRM_URL}/orders/{order_id}/edit"
+            return order_link
+
+    return None
+# -------------------------------------------------------------------
+
+
 # --- НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ДЕТАЛЕЙ ЗАКАЗА ---
 def _get_order_details_by_id(order_id: int) -> Optional[Dict[str, Any]]:
     """Получает полные детали заказа по его ID."""
