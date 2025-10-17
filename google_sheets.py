@@ -15,17 +15,22 @@ except ImportError:
     def send_telegram_message(message: str):
         print(f"  ⚠️ Заглушка: send_telegram_message не реализована. Сообщение: {message}")
 
-# Импортируем get_manager_name_from_crm из retailcrm_integration
+# ИЗМЕНЕНИЕ: Добавлен импорт get_last_order_link_for_check
 try:
-    from retailcrm_integration import get_manager_name_from_crm
+    from retailcrm_integration import get_manager_name_from_crm, get_last_order_link_for_check
 except ImportError:
     print(
-        "ВНИМАНИЕ: Модуль retailcrm_integration не найден или get_manager_name_from_crm не определена. Убедитесь, что он существует и доступен.")
+        "ВНИМАНИЕ: Модуль retailcrm_integration не найден или функции не определены. Убедитесь, что он существует и доступен.")
 
 
     def get_manager_name_from_crm(phone_number: str) -> str:
         print("  ⚠️ Заглушка: retailcrm_integration.get_manager_name_from_crm не реализована. Возвращаем 'Неизвестно'.")
         return "Неизвестно"
+
+    # ДОБАВЛЕНА ЗАГЛУШКА: для корректной работы новой логики
+    def get_last_order_link_for_check(phone_number: str) -> str:
+        print("  ⚠️ Заглушка: retailcrm_integration.get_last_order_link_for_check не реализована. Возвращаем None.")
+        return None
 
 # URL вашей Google Forms
 FORM_URL = "https://docs.google.com/forms/u/0/d/e/1FAIpQLSeI-BvmkSZgzGXeQB83KQLR0O-5_ALgdhWg9LoMV7DskLqBLQ/formResponse"
@@ -92,15 +97,20 @@ def format_duration(seconds: int) -> str:
     return f"{minutes}м {remaining_seconds}с"
 
 
-def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str):
+# ИЗМЕНЕНИЕ: Добавлен параметр existing_order_links
+def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str, existing_order_links: set):
     """
     Отправляет данные анализа звонков в Google Forms и краткое резюме в Telegram,
-    учитывая категорию звонка.
+    учитывая категорию звонка. Также выполняет финальную проверку на дублирование.
 
     Args:
         folder_path (Path): Путь к папке с JSON-файлами анализа.
         target_folder_date_str (str): Строка с датой папки, которую обрабатываем (например, "25.06.2025").
+        existing_order_links (set): Множество ссылок на заказы, уже проанализированные в прошлых циклах.
     """
+    # НОВЫЙ НАБОР: для отслеживания отправленных ссылок в ТЕКУЩЕМ цикле
+    sent_order_links_in_current_run = set()
+
     # Используем переданную дату для формирования пути к папкам audio и transcripts
     audio_calls_folder = Path("audio") / f"звонки_{target_folder_date_str}"
     transcripts_folder = Path("transcripts") / f"транскрибация_{target_folder_date_str}"
@@ -125,13 +135,15 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
         call_number_from_file = get_call_number_from_filename(filename)
         # Инициализируем ссылку на заказ здесь, чтобы использовать её ниже
         order_link = ""
+        contact_phone_number = ""
+        phone_to_send = ""
 
         try:
             with open(analysis_path, "r", encoding="utf-8") as f:
                 analysis_data = json.load(f)
                 call_summary = analysis_data.get("summary", "")
                 call_category = analysis_data.get("call_category", "Неизвестно")
-                # НОВОЕ: Считываем ссылку на заказ прямо из файла анализа
+                # НОВОЕ: Считываем ссылку на заказ прямо из файла анализа (должна быть там после шага 2)
                 order_link = analysis_data.get("order_link", "")
 
         except FileNotFoundError:
@@ -147,7 +159,6 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
         start_time = ""
         call_type_with_duration = "Неизвестно"
         record_link = ""
-        contact_phone_number = ""
         transcript_content = ""
 
         if info_path.exists():
@@ -207,6 +218,30 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
             else:
                 print(f"  ❌ Не удалось получить имя менеджера из RetailCRM для {analysis_path.name}")
 
+        # --- НОВАЯ ФИНАЛЬНАЯ ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ (Проверка на дублирование) ---
+
+        # 1. Если order_link не был получен из файла анализа (некорректный анализ или логика), пытаемся получить его
+        if not order_link and phone_to_send:
+             order_link = get_last_order_link_for_check(phone_to_send)
+             if order_link:
+                 analysis_data['order_link'] = order_link
+
+        if order_link:
+            # Проверка A (Безопасность): Была ли ссылка уже в таблице (из прошлых запусков)?
+            # Этот звонок не должен был попасть сюда (фильтр на Шаге 2), но это гарантия.
+            if order_link in existing_order_links:
+                print(
+                    f"  ❌ ФИНАЛЬНЫЙ ФИЛЬТР (A): Заказ {order_link} УЖЕ ЕСТЬ в Google Sheets. Пропускаем анализ {filename}."
+                )
+                continue
+
+            # Проверка B (ВАЖНО): Был ли заказ уже отправлен в ТЕКУЩЕМ цикле?
+            if order_link in sent_order_links_in_current_run:
+                print(
+                    f"  ❌ ФИНАЛЬНЫЙ ФИЛЬТР (B): Заказ {order_link} УЖЕ ОТПРАВЛЕН в этом цикле. Пропускаем анализ {filename}."
+                )
+                continue
+
         # --- Логика отправки в Google Forms ---
         if call_category == "Заказ":
             payload = {
@@ -228,6 +263,12 @@ def send_analyses_to_google_form(folder_path: Path, target_folder_date_str: str)
             response = requests.post(FORM_URL, data=payload)
             if response.status_code == 200:
                 print(f"[✓] Отправлено в Google Forms: {filename} (Категория: {call_category})")
+
+                # ДОБАВЛЕНИЕ ССЫЛКИ В СПИСОК ОТПРАВЛЕННЫХ ЗА ТЕКУЩИЙ ЦИКЛ
+                if order_link:
+                    sent_order_links_in_current_run.add(order_link)
+                    print(f"  ✅ Ссылка {order_link} добавлена в список отправленных за текущий цикл.")
+
             else:
                 print(
                     f"[✗] Ошибка отправки в Google Forms: {filename} — Status {response.status_code}. Ответ: {response.text}")
@@ -260,4 +301,5 @@ if __name__ == "__main__":
     # Для тестирования модуля отдельно, используйте текущую дату
     today_str = datetime.today().strftime("%d.%m.%Y")
     folder_name = Path("analyses") / f"транскрибация_{today_str}"
-    send_analyses_to_google_form(folder_name, today_str)
+    # ИЗМЕНЕНИЕ: Добавлен set() для соответствия новой сигнатуре
+    send_analyses_to_google_form(folder_name, today_str, set())

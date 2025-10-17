@@ -64,7 +64,8 @@ def clean_old_folders(base_dir: Path, days_to_keep: int):
     print(f"Очистка в {base_dir} завершена.")
 
 
-def send_all_analyses_to_integrations(analyses_folder_path: Path, target_folder_date_str: str):
+# ИЗМЕНЕНИЕ: Добавлен параметр existing_order_links
+def send_all_analyses_to_integrations(analyses_folder_path: Path, target_folder_date_str: str, existing_order_links: set):
     """
     Отправляет сгенерированные JSON-файлы анализов в Google Forms.
     """
@@ -73,7 +74,8 @@ def send_all_analyses_to_integrations(analyses_folder_path: Path, target_folder_
         print(f"Папка с анализами не найдена: {analyses_folder_path}. Пропускаем отправку.")
         return
     print(f"\n  ➡️ Запускаем отправку всех целевых анализов в Google Forms из {analyses_folder_path}.")
-    send_analyses_to_google_form(analyses_folder_path, target_folder_date_str)
+    # ИЗМЕНЕНИЕ: Передаем набор ссылок дальше для финальной фильтрации
+    send_analyses_to_google_form(analyses_folder_path, target_folder_date_str, existing_order_links)
 
 
 def run_processing_pipeline():
@@ -172,7 +174,8 @@ def run_processing_pipeline():
                 print(f"⚠️ Пропускаем звонок из-за отсутствия номера или направления: {call.get('communication_id')}")
                 continue
 
-            # --- НОВАЯ ФИЛЬТРАЦИЯ: Проверка на повторный анализ заказа (Первое касание) ---
+            # --- ФИЛЬТРАЦИЯ: Проверка на повторный анализ заказа (Первое касание, из ПРЕДЫДУЩИХ запусков) ---
+            # Этот фильтр сохраняем для экономии ресурсов.
             if existing_order_links:
                 last_order_link = get_last_order_link_for_check(phone_number)
 
@@ -237,7 +240,8 @@ def run_processing_pipeline():
                 f"Статус папки анализов: {analyses_dir.exists()} (содержит {len(list(analyses_dir.glob('*_analysis.json')))} json файлов)")
 
             # 5. Отправка анализов
-            send_all_analyses_to_integrations(analyses_dir, target_folder_date_str)
+            # ИЗМЕНЕНИЕ: Передаем набор уже существующих ссылок
+            send_all_analyses_to_integrations(analyses_dir, target_folder_date_str, existing_order_links)
 
         # 6. УДАЛЕНИЕ СКАЧАННОГО ФАЙЛА GOOGLE SHEETS
         if gs_file_path.exists():
